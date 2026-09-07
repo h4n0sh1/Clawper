@@ -22,7 +22,7 @@ from clawper.workspace.manager import WorkspaceManager
 from clawper.workspace.reporter import CTFReporter
 
 
-MIN_ERROR_BACKOFF_SECONDS = 1.0
+ERROR_BACKOFF_STEP_SECONDS = 1.0
 MAX_ERROR_BACKOFF_SECONDS = 30.0
 
 
@@ -270,7 +270,7 @@ class ClawperEngine:
             # Pause briefly between iterations if configured. Back off with a longer
             # delay after consecutive agent errors to avoid hammering a broken agent,
             # while still never giving up on the loop itself. The error backoff uses a
-            # fixed base (MIN_ERROR_BACKOFF_SECONDS) independent of loop_delay so normal
+            # fixed base (ERROR_BACKOFF_STEP_SECONDS) independent of loop_delay so normal
             # idle pacing configuration doesn't unexpectedly scale error retry delays.
             # Linear (rather than exponential) backoff is used intentionally: it grows
             # predictably with the error streak while the MAX_ERROR_BACKOFF_SECONDS cap
@@ -280,7 +280,7 @@ class ClawperEngine:
             # backoff only stays at its max for sustained failure streaks, not sporadic ones.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
-                delay = min(MIN_ERROR_BACKOFF_SECONDS * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
+                delay = min(ERROR_BACKOFF_STEP_SECONDS * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
                 self._notify_status(
                     f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
                 )
