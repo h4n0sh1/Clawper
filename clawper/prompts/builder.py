@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from clawper.agents.base import STATUS_COMPLETED, STATUS_ERRORED, STATUS_INTERRUPTED, STATUS_TIMEOUT
+from clawper.agents.base import STATUS_COMPLETED, describe_agent_status
 from clawper.conditions.base import ConditionResult
 from clawper.config import ClawperConfig
 from clawper.prompts.templates import (
@@ -61,11 +61,7 @@ class PromptBuilder:
 
         # 0. Agent error / crash recovery guidance takes priority
         if agent_status and agent_status != STATUS_COMPLETED:
-            reason = {
-                STATUS_TIMEOUT: "took too long to respond and was terminated",
-                STATUS_ERRORED: "crashed or raised an error",
-                STATUS_INTERRUPTED: "was interrupted before finishing",
-            }.get(agent_status, f"ended with status '{agent_status}'")
+            reason = describe_agent_status(agent_status)
             error_detail = f" Error detail: {agent_error}" if agent_error else ""
             nudges.append(
                 f"RECOVERY DIRECTIVE: Your previous run {reason} before serving all required flags.{error_detail}\n"

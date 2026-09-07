@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED
+from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED, describe_agent_status
 from clawper.agents import create_agent_driver
 from clawper.conditions.base import ConditionResult, EvaluationContext
 from clawper.conditions.composite import CompositeCondition
@@ -200,7 +200,7 @@ class ClawperEngine:
             # An agent that stops processing without serving all flags (errored, timed out,
             # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
             if agent_response.status != STATUS_COMPLETED:
-                self.state.record_agent_error(agent_response.error_message or f"Agent ended with status '{agent_response.status}'")
+                self.state.record_agent_error(agent_response.error_message or f"Agent {describe_agent_status(agent_response.status)}")
                 self._notify_status(
                     f"AGENT ERROR (iteration {iteration}, status={agent_response.status}): "
                     f"{agent_response.error_message or 'no additional details'}. "
@@ -263,16 +263,16 @@ class ClawperEngine:
 
             # Pause briefly between iterations if configured. Back off with a longer
             # delay after consecutive agent errors to avoid hammering a broken agent,
-            # while still never giving up on the loop itself.
+            # while still never giving up on the loop itself. A minimum base is used
+            # for the backoff even when loop_delay is 0, so error retries are always throttled.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
-                backoff_delay = min(base_delay * (2 ** min(self.state.consecutive_errors, 5)), 60.0)
-                delay = max(base_delay, backoff_delay)
-                if delay > 0:
-                    self._notify_status(
-                        f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
-                    )
-                    time.sleep(delay)
+                effective_base = base_delay if base_delay > 0 else 1.0
+                delay = min(effective_base * self.state.consecutive_errors, 30.0)
+                self._notify_status(
+                    f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
+                )
+                time.sleep(delay)
             elif base_delay > 0:
                 time.sleep(base_delay)
 

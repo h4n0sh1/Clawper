@@ -17,6 +17,17 @@ STATUS_TIMEOUT = "timeout"
 STATUS_INTERRUPTED = "interrupted"
 AGENT_ERROR_STATUSES = (STATUS_ERRORED, STATUS_TIMEOUT, STATUS_INTERRUPTED)
 
+_STATUS_DESCRIPTIONS = {
+    STATUS_TIMEOUT: "took too long to respond and was terminated",
+    STATUS_ERRORED: "crashed or raised an error",
+    STATUS_INTERRUPTED: "was interrupted before finishing",
+}
+
+
+def describe_agent_status(status: str) -> str:
+    """Human-readable description of a non-completed agent status, for logs/prompts."""
+    return _STATUS_DESCRIPTIONS.get(status, f"ended with status '{status}'")
+
 
 @dataclass
 class AgentResponse:
