@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED, describe_agent_status
+from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED, STATUS_ERRORED, describe_agent_status
 from clawper.agents import create_agent_driver
 from clawper.conditions.base import ConditionResult, EvaluationContext
 from clawper.conditions.composite import CompositeCondition
@@ -134,7 +134,7 @@ class ClawperEngine:
                 raw_output="",
                 exit_code=1,
                 duration_seconds=duration,
-                status="errored",
+                status=STATUS_ERRORED,
                 error_message=f"{exc}\n{tb}",
             )
 
@@ -270,6 +270,9 @@ class ClawperEngine:
             # delay after consecutive agent errors to avoid hammering a broken agent,
             # while still never giving up on the loop itself. A minimum base is used
             # for the backoff even when loop_delay is 0, so error retries are always throttled.
+            # Linear (rather than exponential) backoff is used intentionally: it grows
+            # predictably with the error streak while the MAX_ERROR_BACKOFF_SECONDS cap
+            # keeps retries frequent enough that the agent isn't left idle for too long.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
                 effective_base = base_delay if base_delay > 0 else MIN_ERROR_BACKOFF_SECONDS
