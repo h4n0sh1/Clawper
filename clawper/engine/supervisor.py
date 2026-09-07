@@ -268,15 +268,15 @@ class ClawperEngine:
 
             # Pause briefly between iterations if configured. Back off with a longer
             # delay after consecutive agent errors to avoid hammering a broken agent,
-            # while still never giving up on the loop itself. A minimum base is used
-            # for the backoff even when loop_delay is 0, so error retries are always throttled.
+            # while still never giving up on the loop itself. The error backoff uses a
+            # fixed base (MIN_ERROR_BACKOFF_SECONDS) independent of loop_delay so normal
+            # idle pacing configuration doesn't unexpectedly scale error retry delays.
             # Linear (rather than exponential) backoff is used intentionally: it grows
             # predictably with the error streak while the MAX_ERROR_BACKOFF_SECONDS cap
             # keeps retries frequent enough that the agent isn't left idle for too long.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
-                effective_base = base_delay if base_delay > 0 else MIN_ERROR_BACKOFF_SECONDS
-                delay = min(effective_base * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
+                delay = min(MIN_ERROR_BACKOFF_SECONDS * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
                 self._notify_status(
                     f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
                 )

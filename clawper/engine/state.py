@@ -95,6 +95,7 @@ class EngineState:
     def record_agent_success(self) -> None:
         """Reset the consecutive error streak after a successfully completed iteration."""
         self.consecutive_errors = 0
+        self.last_error = None
 
     def update_phase(self, req_flags: int = 1, is_root: bool = False) -> None:
         num_flags = len(self.captured_flags)

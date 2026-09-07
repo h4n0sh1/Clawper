@@ -112,6 +112,7 @@ def test_clawper_engine_recovers_from_agent_exception():
         assert len(final_state.captured_flags) == 1
         assert final_state.total_errors == 2
         assert final_state.consecutive_errors == 0
+        assert final_state.last_error is None
         assert any("crash" in s.lower() or "error" in s.lower() for s in statuses)
 
 
