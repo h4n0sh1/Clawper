@@ -308,4 +308,16 @@ class ClawperEngine:
         self.reporter.generate_writeup(self.state.to_dict(), writeup_path)
         self.reporter.generate_json_report(self.state.to_dict())
 
+        # Generate the professional engagement report (REPORT.md)
+        report_path = self.workspace.root_dir / "REPORT.md"
+        try:
+            from clawper.workspace.pro_report import ProfessionalReportBuilder
+            content = ProfessionalReportBuilder(self.workspace.root_dir, self.config).build(
+                self.state.to_dict()
+            )
+            report_path.write_text(content, encoding="utf-8")
+            self._notify_status(f"Professional report saved to {report_path}")
+        except Exception as exc:  # never let reporting crash the run
+            self._notify_status(f"WARNING: professional report generation failed (ignored): {exc}")
+
         self._notify_status(f"Session finished. Writeup saved to {writeup_path}")

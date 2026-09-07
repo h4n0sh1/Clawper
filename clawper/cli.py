@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -159,8 +160,23 @@ def run(
             console.print(f"[blue][*][/blue] {msg}")
 
     def on_stream(chunk: str) -> None:
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
+        # Driver emits concise, prefixed lines (⚙ tool, 💬 text, ↳ result).
+        # Render them with light styling so the live feed reads like a chat.
+        for line in chunk.splitlines():
+            if not line:
+                continue
+            if line.startswith("💬"):
+                console.print(f"[white]{line}[/white]")
+            elif line.startswith("⚙"):
+                console.print(f"[cyan]{line}[/cyan]")
+            elif line.lstrip().startswith("↳"):
+                console.print(f"[dim]{line}[/dim]")
+            elif line.startswith("✗") or "API Error" in line:
+                console.print(f"[red]{line}[/red]")
+            elif line.startswith("[clawper]"):
+                console.print(f"[yellow]{line}[/yellow]")
+            else:
+                console.print(line, highlight=False)
 
     def on_flag(flag: str, src: str) -> None:
         console.print(Panel(f"🚩 FLAG CAPTURED: [bold yellow]{flag}[/bold yellow]\nSource: {src}", border_style="green"))
@@ -254,20 +270,40 @@ def status(workspace: str) -> None:
 
 @main.command()
 @click.option("--workspace", "-w", default="./clawper_workspace", help="Workspace directory.")
-@click.option("--output", "-o", help="Custom output path for writeup markdown.")
-def report(workspace: str, output: Optional[str]) -> None:
-    """Generate or view CTF writeup from workspace."""
+@click.option("--output", "-o", help="Custom output path for the report markdown.")
+@click.option("--writeup", is_flag=True, help="Generate the legacy CTF writeup instead of the professional report.")
+def report(workspace: str, output: Optional[str], writeup: bool) -> None:
+    """Generate the professional engagement report (or --writeup for the legacy format)."""
     wm = WorkspaceManager(workspace)
     state = wm.load_state()
     if not state:
         console.print(f"[red]No saved session state found in {workspace}[/red]")
         return
 
+    # Recover target metadata from the saved report.json if present.
     config = ClawperConfig(workspace_dir=workspace)
-    reporter = CTFReporter(wm.root_dir, config)
-    out_path = Path(output) if output else None
-    content = reporter.generate_writeup(state, out_path)
-    console.print(Panel(content, title="CTF Writeup Preview", border_style="cyan"))
+    report_json = wm.root_dir / "report.json"
+    if report_json.exists():
+        try:
+            saved = json.loads(report_json.read_text(encoding="utf-8"))
+            if isinstance(saved.get("config"), dict):
+                config = ClawperConfig.from_dict(saved["config"])
+        except Exception:
+            pass
+
+    if writeup:
+        reporter = CTFReporter(wm.root_dir, config)
+        out_path = Path(output) if output else None
+        content = reporter.generate_writeup(state, out_path)
+        console.print(Panel(content[:4000], title="CTF Writeup Preview", border_style="cyan"))
+        return
+
+    from clawper.workspace.pro_report import ProfessionalReportBuilder
+    content = ProfessionalReportBuilder(wm.root_dir, config).build(state)
+    out_path = Path(output) if output else (wm.root_dir / "REPORT.md")
+    out_path.write_text(content, encoding="utf-8")
+    console.print(f"[bold green]Professional report written to {out_path}[/bold green]")
+    console.print(Panel(content[:4000], title="Report Preview (truncated)", border_style="cyan"))
 
 
 if __name__ == "__main__":

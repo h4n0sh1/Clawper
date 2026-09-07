@@ -112,6 +112,9 @@ class AgentConfig:
     custom_command: Optional[str] = None
     environment: Dict[str, str] = field(default_factory=dict)
     model: Optional[str] = None
+    # Stream the agent's actions live (tool calls, text, results) as they happen.
+    # Uses `claude --output-format stream-json --verbose` under the hood.
+    stream_json: bool = True
 
 
 @dataclass

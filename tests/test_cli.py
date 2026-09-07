@@ -52,7 +52,12 @@ def test_cli_status_and_report():
         assert status_res.exit_code == 0
         assert "Session Status" in status_res.output
 
-        # Check report command
+        # Check report command (defaults to the professional engagement report)
         report_res = runner.invoke(main, ["report", "--workspace", tmpdir])
         assert report_res.exit_code == 0
-        assert "CTF Writeup" in report_res.output
+        assert "Professional report written" in report_res.output
+
+        # Legacy writeup is still available behind --writeup
+        writeup_res = runner.invoke(main, ["report", "--workspace", tmpdir, "--writeup"])
+        assert writeup_res.exit_code == 0
+        assert "CTF Writeup" in writeup_res.output

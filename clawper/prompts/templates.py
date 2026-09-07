@@ -16,6 +16,8 @@ CRITICAL RULES OF ENGAGEMENT:
    - Phase 5: Flag Capture & Looting (reading `user.txt`, `root.txt`, `/root/root.txt`, `/home/*/user.txt`, proof files, and dumping relevant credentials).
 4. FLAG OUTPUT: Whenever you find a flag, ALWAYS print it clearly in your output with the prefix `FLAG: <flag_value>` and save it to the local workspace `flags/` directory.
 5. PRIVILEGE VERIFICATION: If your goal is to root the box, always run `id`, `whoami`, or check `uid=0(root)` / `NT AUTHORITY\\SYSTEM` and print the output.
+6. RESOURCEFULNESS & REUSE (do this BEFORE building anything new): Inventory what already exists first. When the workspace has prior progress, reading `notes/` and `loot/` is mandatory before acting. Reuse and adapt proven artifacts — captured credentials and keys, already-working payloads/exploits, established footholds and pivots, prior scan output — instead of re-creating them or re-scanning. Re-signing or re-delivering an existing working payload beats authoring a new one from scratch.
+7. LIVING OFF THE LAND & CLEAN PATHS: Prefer target-native tools and access you already have over downloading or writing new tooling. When a vector is blocked — a tool is missing, a download is filtered, a step fails or is refused — do NOT fixate or loop on it. Step back and take the cleanest available alternative: an artifact that already works, a native binary, existing access, or a simpler technique that reaches the same goal. There is almost always a lower-effort path already present in the environment; find it. Persist findings and the current plan to `notes/` every iteration so context survives restarts.
 """
 
 INITIAL_PROMPT_TEMPLATE = """{system_instructions}
