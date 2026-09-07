@@ -22,6 +22,10 @@ from clawper.workspace.manager import WorkspaceManager
 from clawper.workspace.reporter import CTFReporter
 
 
+MIN_ERROR_BACKOFF_SECONDS = 1.0
+MAX_ERROR_BACKOFF_SECONDS = 30.0
+
+
 class ClawperEngine:
     """
     Autonomous and Unattended CTF Execution Supervisor.
@@ -200,7 +204,8 @@ class ClawperEngine:
             # An agent that stops processing without serving all flags (errored, timed out,
             # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
             if agent_response.status != STATUS_COMPLETED:
-                self.state.record_agent_error(agent_response.error_message or f"Agent {describe_agent_status(agent_response.status)}")
+                fallback_error = f"Agent {describe_agent_status(agent_response.status)}"
+                self.state.record_agent_error(agent_response.error_message or fallback_error)
                 self._notify_status(
                     f"AGENT ERROR (iteration {iteration}, status={agent_response.status}): "
                     f"{agent_response.error_message or 'no additional details'}. "
@@ -267,8 +272,8 @@ class ClawperEngine:
             # for the backoff even when loop_delay is 0, so error retries are always throttled.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
-                effective_base = base_delay if base_delay > 0 else 1.0
-                delay = min(effective_base * self.state.consecutive_errors, 30.0)
+                effective_base = base_delay if base_delay > 0 else MIN_ERROR_BACKOFF_SECONDS
+                delay = min(effective_base * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
                 self._notify_status(
                     f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
                 )
