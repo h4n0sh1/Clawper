@@ -9,6 +9,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+# Canonical agent iteration statuses, shared across the engine, prompts and
+# agent drivers so all modules agree on the same literals.
+STATUS_COMPLETED = "completed"
+STATUS_ERRORED = "errored"
+STATUS_TIMEOUT = "timeout"
+STATUS_INTERRUPTED = "interrupted"
+AGENT_ERROR_STATUSES = (STATUS_ERRORED, STATUS_TIMEOUT, STATUS_INTERRUPTED)
+
+_STATUS_DESCRIPTIONS = {
+    STATUS_TIMEOUT: "took too long to respond and was terminated",
+    STATUS_ERRORED: "crashed or raised an error",
+    STATUS_INTERRUPTED: "was interrupted before finishing",
+}
+
+
+def describe_agent_status(status: str) -> str:
+    """Human-readable description of a non-completed agent status, for logs/prompts."""
+    return _STATUS_DESCRIPTIONS.get(status, f"ended with status '{status}'")
+
 
 @dataclass
 class AgentResponse:
@@ -19,13 +38,13 @@ class AgentResponse:
     tools_used: List[str] = field(default_factory=list)
     exit_code: int = 0
     duration_seconds: float = 0.0
-    status: str = "completed"  # "completed", "errored", "timeout", "interrupted"
+    status: str = STATUS_COMPLETED  # "completed", "errored", "timeout", "interrupted"
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_success(self) -> bool:
-        return self.status == "completed" and self.exit_code == 0
+        return self.status == STATUS_COMPLETED and self.exit_code == 0
 
 
 class AgentDriver(ABC):

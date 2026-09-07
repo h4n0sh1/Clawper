@@ -20,14 +20,14 @@ class MockAgentDriver(AgentDriver):
 
     def __init__(
         self,
-        responses: Optional[Sequence[str | AgentResponse]] = None,
+        responses: Optional[Sequence[str | AgentResponse | BaseException]] = None,
         config: Optional[AgentConfig] = None,
         name: str = "MockAgent",
         delay_per_iteration: float = 0.0,
     ):
         super().__init__(name=name)
         self.config = config or AgentConfig(driver_type="mock")
-        self.responses: List[str | AgentResponse] = list(responses) if responses else []
+        self.responses: List[str | AgentResponse | BaseException] = list(responses) if responses else []
         self.current_step = 0
         self.delay_per_iteration = delay_per_iteration
         self.received_prompts: List[str] = []
@@ -35,7 +35,7 @@ class MockAgentDriver(AgentDriver):
     def is_available(self) -> bool:
         return True
 
-    def set_responses(self, responses: Sequence[str | AgentResponse]) -> None:
+    def set_responses(self, responses: Sequence[str | AgentResponse | BaseException]) -> None:
         self.responses = list(responses)
         self.current_step = 0
 
@@ -54,6 +54,10 @@ class MockAgentDriver(AgentDriver):
         if self.responses and self.current_step < len(self.responses):
             resp = self.responses[self.current_step]
             self.current_step += 1
+            if isinstance(resp, BaseException):
+                # Allows tests to simulate an agent crashing / raising an
+                # unhandled exception mid-processing.
+                raise resp
             if isinstance(resp, AgentResponse):
                 if stream_callback and resp.output:
                     for line in resp.output.splitlines(keepends=True):

@@ -5,6 +5,7 @@ Unit and integration tests for ClawperEngine supervisor loop.
 import tempfile
 from pathlib import Path
 
+from clawper.agents.base import AgentResponse
 from clawper.agents.mock import MockAgentDriver
 from clawper.config import (
     ClawperConfig,
@@ -66,6 +67,53 @@ def test_clawper_engine_never_stops_until_success():
         writeup_file = Path(tmpdir) / "WRITEUP.md"
         assert writeup_file.exists()
         assert "TestCTF" in writeup_file.read_text()
+
+
+def test_clawper_engine_recovers_from_agent_exception():
+    """
+    If the agent driver raises an unhandled exception (crash) or otherwise stops
+    processing without serving all flags, Clawper must treat it as a failed
+    iteration and keep prompting until every required flag is found instead of
+    crashing or giving up.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = ClawperConfig(
+            target=TargetConfig(box_name="TestCTF", ip="10.10.11.101"),
+            flags=FlagConditionConfig(required_count=1),
+            root=RootConditionConfig(enabled=False),
+            execution=ExecutionConfig(loop_delay=0.0, max_iterations=10),
+            workspace_dir=tmpdir,
+        )
+
+        mock_responses = [
+            # Iteration 1: normal recon.
+            "Running nmap scan. Open ports: 80, 22.",
+            # Iteration 2: agent crashes with an unhandled exception.
+            RuntimeError("simulated agent crash mid-processing"),
+            # Iteration 3: agent times out / errors via a status response.
+            AgentResponse(output="", status="timeout", error_message="process timed out", exit_code=-1),
+            # Iteration 4: agent recovers and finds the flag.
+            "Exploited the service. flag: 11111111222222223333333344444444",
+        ]
+
+        agent = MockAgentDriver(responses=mock_responses)
+        statuses = []
+
+        engine = ClawperEngine(
+            config=config,
+            agent_driver=agent,
+            on_status_update=lambda msg, st: statuses.append(msg),
+        )
+
+        final_state = engine.run()
+
+        assert final_state.success is True
+        assert final_state.iterations_completed == 4
+        assert len(final_state.captured_flags) == 1
+        assert final_state.total_errors == 2
+        assert final_state.consecutive_errors == 0
+        assert final_state.last_error is None
+        assert any("crash" in s.lower() or "error" in s.lower() for s in statuses)
 
 
 def test_clawper_engine_max_iterations_safeguard():

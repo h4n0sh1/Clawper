@@ -7,10 +7,11 @@ from __future__ import annotations
 import signal
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from clawper.agents.base import AgentDriver, AgentResponse
+from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED, STATUS_ERRORED, describe_agent_status
 from clawper.agents import create_agent_driver
 from clawper.conditions.base import ConditionResult, EvaluationContext
 from clawper.conditions.composite import CompositeCondition
@@ -19,6 +20,10 @@ from clawper.engine.state import EngineState
 from clawper.prompts.builder import PromptBuilder
 from clawper.workspace.manager import WorkspaceManager
 from clawper.workspace.reporter import CTFReporter
+
+
+ERROR_BACKOFF_STEP_SECONDS = 1.0
+MAX_ERROR_BACKOFF_SECONDS = 30.0
 
 
 class ClawperEngine:
@@ -101,6 +106,38 @@ class ClawperEngine:
                 if self.on_flag_found:
                     self.on_flag_found(flag, f"iteration_{iteration}")
 
+    def _run_agent_safely(self, prompt: str, workspace_dir: Path) -> AgentResponse:
+        """
+        Invoke the agent driver, guarding against ANY exception it may raise.
+        Clawper must never crash because of a misbehaving agent: any unhandled
+        error is converted into an "errored" AgentResponse so the supervisor
+        loop can log it and keep prompting until the flags are found.
+        """
+        start_time = time.time()
+        try:
+            return self.agent.run_iteration(
+                prompt=prompt,
+                session_id=self.state.session_id,
+                workspace_dir=workspace_dir,
+                stream_callback=self._handle_stream,
+            )
+        except Exception as exc:
+            duration = time.time() - start_time
+            tb = traceback.format_exc()
+            self._notify_status(
+                f"ERROR: Agent '{self.agent.name}' raised an unhandled exception: {exc}. "
+                "Treating this iteration as failed and continuing the loop.\n"
+                f"{tb}"
+            )
+            return AgentResponse(
+                output="",
+                raw_output="",
+                exit_code=1,
+                duration_seconds=duration,
+                status=STATUS_ERRORED,
+                error_message=f"{exc}\n{tb}",
+            )
+
     def run(self) -> EngineState:
         """
         Execute the autonomous loop until all success conditions are met.
@@ -156,16 +193,27 @@ class ClawperEngine:
                     last_output=last_output,
                     state=self.state.to_dict(),
                     consecutive_stalls=consecutive_stalls,
+                    agent_status=self.state.last_agent_status,
+                    agent_error=self.state.last_error,
                 )
 
-            # Prompt agent
+            # Prompt agent (any exception raised by the agent is caught and treated as a failed iteration)
             self._notify_status(f"Dispatching prompt to agent ({self.agent.name})...")
-            agent_response = self.agent.run_iteration(
-                prompt=current_prompt,
-                session_id=self.state.session_id,
-                workspace_dir=self.workspace.root_dir,
-                stream_callback=self._handle_stream,
-            )
+            agent_response = self._run_agent_safely(current_prompt, self.workspace.root_dir)
+            self.state.last_agent_status = agent_response.status
+
+            # An agent that stops processing without serving all flags (errored, timed out,
+            # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
+            if agent_response.status != STATUS_COMPLETED:
+                fallback_error = f"Agent {describe_agent_status(agent_response.status)}"
+                self.state.record_agent_error(agent_response.error_message or fallback_error)
+                self._notify_status(
+                    f"AGENT ERROR (iteration {iteration}, status={agent_response.status}): "
+                    f"{agent_response.error_message or 'no additional details'}. "
+                    f"Consecutive errors: {self.state.consecutive_errors}. Retrying with a fresh prompt."
+                )
+            else:
+                self.state.record_agent_success()
 
             # Record raw output and logs
             last_output = agent_response.output
@@ -180,6 +228,7 @@ class ClawperEngine:
                 status=agent_response.status,
                 duration=agent_response.duration_seconds,
                 commands_run=agent_response.commands_run,
+                error_message=agent_response.error_message,
             )
 
             # Evaluate success conditions
@@ -218,16 +267,37 @@ class ClawperEngine:
                 self._notify_status(f"Condition evaluation: Incomplete ({len(self.state.captured_flags)}/{self.config.flags.required_count} flags).")
                 self._notify_status("Wrapper will prompt the agent again until all conditions are satisfied.")
 
-            # Pause briefly between iterations if configured
-            if self.config.execution.loop_delay > 0:
-                time.sleep(self.config.execution.loop_delay)
+            # Pause briefly between iterations if configured. Back off with a longer
+            # delay after consecutive agent errors to avoid hammering a broken agent,
+            # while still never giving up on the loop itself. The error backoff uses a
+            # fixed base (ERROR_BACKOFF_STEP_SECONDS) independent of loop_delay so normal
+            # idle pacing configuration doesn't unexpectedly scale error retry delays.
+            # Linear (rather than exponential) backoff is used intentionally: it grows
+            # predictably with the error streak while the MAX_ERROR_BACKOFF_SECONDS cap
+            # keeps retries frequent enough that the agent isn't left idle for too long.
+            # `consecutive_errors` (not a decaying/windowed value) is reset to 0 by
+            # `record_agent_success` as soon as one iteration completes cleanly, so the
+            # backoff only stays at its max for sustained failure streaks, not sporadic ones.
+            base_delay = self.config.execution.loop_delay
+            if self.state.consecutive_errors > 0:
+                delay = min(ERROR_BACKOFF_STEP_SECONDS * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
+                self._notify_status(
+                    f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
+                )
+                time.sleep(delay)
+            elif base_delay > 0:
+                time.sleep(base_delay)
 
         self._finalize()
         return self.state
 
     def _finalize(self) -> None:
         """Clean up agent, save state, and generate reports."""
-        self.agent.cleanup()
+        try:
+            self.agent.cleanup()
+        except Exception as exc:
+            self._notify_status(f"WARNING: Agent cleanup raised an exception (ignored): {exc}")
+
         if not self.state.completed_at:
             self.state.completed_at = time.time()
 

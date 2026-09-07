@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from clawper.agents.base import STATUS_COMPLETED, describe_agent_status
 from clawper.conditions.base import ConditionResult
 from clawper.config import ClawperConfig
 from clawper.prompts.templates import (
@@ -49,12 +50,26 @@ class PromptBuilder:
         condition_result: ConditionResult,
         state: Dict[str, Any],
         consecutive_stalls: int,
+        agent_status: str = STATUS_COMPLETED,
+        agent_error: Optional[str] = None,
     ) -> str:
         """Generate tactical advice and anti-stalling instructions."""
         captured_flags = state.get("captured_flags", [])
         num_flags = len(captured_flags)
         req_flags = self.config.flags.required_count
         nudges: List[str] = []
+
+        # 0. Agent error / crash recovery guidance takes priority
+        if agent_status and agent_status != STATUS_COMPLETED:
+            reason = describe_agent_status(agent_status)
+            error_detail = f" Error detail: {agent_error}" if agent_error else ""
+            nudges.append(
+                f"RECOVERY DIRECTIVE: Your previous run {reason} before serving all required flags.{error_detail}\n"
+                "This counts as a failed iteration, not a completion. Clawper will keep prompting you until every "
+                "required flag is captured. Recover gracefully: check the workspace for partial progress, avoid "
+                "whatever caused the crash/timeout/hang (e.g. long-running blocking commands, interactive prompts, "
+                "infinite loops), and resume the attack with smaller, well-scoped, non-interactive commands."
+            )
 
         # 1. Anti-premature-completion / anti-giving-up check
         lower_out = last_output.lower()
@@ -106,21 +121,28 @@ class PromptBuilder:
         last_output: str,
         state: Dict[str, Any],
         consecutive_stalls: int = 0,
+        agent_status: str = STATUS_COMPLETED,
+        agent_error: Optional[str] = None,
     ) -> str:
         """Construct a continuation prompt to push the agent forward."""
         target_summary = self.config.target.summary()
         captured_flags = state.get("captured_flags", [])
         flags_str = ", ".join(f.get("flag", str(f)) if isinstance(f, dict) else str(f) for f in captured_flags) or "None yet"
 
-        last_status = "Incomplete / Still working"
-        if not condition_result.met:
+        if agent_status and agent_status != STATUS_COMPLETED:
+            last_status = f"Previous iteration {agent_status.upper()} (treated as a failure - retrying)"
+        elif not condition_result.met:
             last_status = "Conditions NOT met"
+        else:
+            last_status = "Incomplete / Still working"
 
         tactical_nudge = self._generate_tactical_nudge(
             last_output=last_output,
             condition_result=condition_result,
             state=state,
             consecutive_stalls=consecutive_stalls,
+            agent_status=agent_status,
+            agent_error=agent_error,
         )
 
         return CONTINUATION_PROMPT_TEMPLATE.format(
