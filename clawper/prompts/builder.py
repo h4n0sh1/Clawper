@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from clawper.agents.base import STATUS_COMPLETED, STATUS_ERRORED, STATUS_INTERRUPTED, STATUS_TIMEOUT
 from clawper.conditions.base import ConditionResult
 from clawper.config import ClawperConfig
 from clawper.prompts.templates import (
@@ -49,7 +50,7 @@ class PromptBuilder:
         condition_result: ConditionResult,
         state: Dict[str, Any],
         consecutive_stalls: int,
-        agent_status: str = "completed",
+        agent_status: str = STATUS_COMPLETED,
         agent_error: Optional[str] = None,
     ) -> str:
         """Generate tactical advice and anti-stalling instructions."""
@@ -59,11 +60,11 @@ class PromptBuilder:
         nudges: List[str] = []
 
         # 0. Agent error / crash recovery guidance takes priority
-        if agent_status and agent_status != "completed":
+        if agent_status and agent_status != STATUS_COMPLETED:
             reason = {
-                "timeout": "took too long to respond and was terminated",
-                "errored": "crashed or raised an error",
-                "interrupted": "was interrupted before finishing",
+                STATUS_TIMEOUT: "took too long to respond and was terminated",
+                STATUS_ERRORED: "crashed or raised an error",
+                STATUS_INTERRUPTED: "was interrupted before finishing",
             }.get(agent_status, f"ended with status '{agent_status}'")
             error_detail = f" Error detail: {agent_error}" if agent_error else ""
             nudges.append(
@@ -124,7 +125,7 @@ class PromptBuilder:
         last_output: str,
         state: Dict[str, Any],
         consecutive_stalls: int = 0,
-        agent_status: str = "completed",
+        agent_status: str = STATUS_COMPLETED,
         agent_error: Optional[str] = None,
     ) -> str:
         """Construct a continuation prompt to push the agent forward."""
@@ -132,7 +133,7 @@ class PromptBuilder:
         captured_flags = state.get("captured_flags", [])
         flags_str = ", ".join(f.get("flag", str(f)) if isinstance(f, dict) else str(f) for f in captured_flags) or "None yet"
 
-        if agent_status and agent_status != "completed":
+        if agent_status and agent_status != STATUS_COMPLETED:
             last_status = f"Previous iteration {agent_status.upper()} (treated as a failure - retrying)"
         elif not condition_result.met:
             last_status = "Conditions NOT met"

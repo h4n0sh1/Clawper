@@ -7,10 +7,11 @@ from __future__ import annotations
 import signal
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from clawper.agents.base import AgentDriver, AgentResponse
+from clawper.agents.base import AgentDriver, AgentResponse, STATUS_COMPLETED
 from clawper.agents import create_agent_driver
 from clawper.conditions.base import ConditionResult, EvaluationContext
 from clawper.conditions.composite import CompositeCondition
@@ -118,9 +119,11 @@ class ClawperEngine:
             )
         except Exception as exc:
             duration = time.time() - start_time
+            tb = traceback.format_exc()
             self._notify_status(
                 f"ERROR: Agent '{self.agent.name}' raised an unhandled exception: {exc}. "
-                "Treating this iteration as failed and continuing the loop."
+                "Treating this iteration as failed and continuing the loop.\n"
+                f"{tb}"
             )
             return AgentResponse(
                 output="",
@@ -128,7 +131,7 @@ class ClawperEngine:
                 exit_code=1,
                 duration_seconds=duration,
                 status="errored",
-                error_message=str(exc),
+                error_message=f"{exc}\n{tb}",
             )
 
     def run(self) -> EngineState:
@@ -186,7 +189,7 @@ class ClawperEngine:
                     last_output=last_output,
                     state=self.state.to_dict(),
                     consecutive_stalls=consecutive_stalls,
-                    agent_status=self.state.history[-1]["status"] if self.state.history else "completed",
+                    agent_status=self.state.history[-1]["status"] if self.state.history else STATUS_COMPLETED,
                     agent_error=self.state.last_error,
                 )
 
@@ -196,7 +199,7 @@ class ClawperEngine:
 
             # An agent that stops processing without serving all flags (errored, timed out,
             # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
-            if agent_response.status != "completed":
+            if agent_response.status != STATUS_COMPLETED:
                 self.state.record_agent_error(agent_response.error_message or f"Agent ended with status '{agent_response.status}'")
                 self._notify_status(
                     f"AGENT ERROR (iteration {iteration}, status={agent_response.status}): "
@@ -258,9 +261,20 @@ class ClawperEngine:
                 self._notify_status(f"Condition evaluation: Incomplete ({len(self.state.captured_flags)}/{self.config.flags.required_count} flags).")
                 self._notify_status("Wrapper will prompt the agent again until all conditions are satisfied.")
 
-            # Pause briefly between iterations if configured
-            if self.config.execution.loop_delay > 0:
-                time.sleep(self.config.execution.loop_delay)
+            # Pause briefly between iterations if configured. Back off with a longer
+            # delay after consecutive agent errors to avoid hammering a broken agent,
+            # while still never giving up on the loop itself.
+            base_delay = self.config.execution.loop_delay
+            if self.state.consecutive_errors > 0:
+                backoff_delay = min(base_delay * (2 ** min(self.state.consecutive_errors, 5)), 60.0)
+                delay = max(base_delay, backoff_delay)
+                if delay > 0:
+                    self._notify_status(
+                        f"Backing off for {delay:.1f}s before retrying after {self.state.consecutive_errors} consecutive agent error(s)."
+                    )
+                    time.sleep(delay)
+            elif base_delay > 0:
+                time.sleep(base_delay)
 
         self._finalize()
         return self.state
