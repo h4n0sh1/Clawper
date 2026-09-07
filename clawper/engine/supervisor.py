@@ -101,6 +101,36 @@ class ClawperEngine:
                 if self.on_flag_found:
                     self.on_flag_found(flag, f"iteration_{iteration}")
 
+    def _run_agent_safely(self, prompt: str, workspace_dir: Path) -> AgentResponse:
+        """
+        Invoke the agent driver, guarding against ANY exception it may raise.
+        Clawper must never crash because of a misbehaving agent: any unhandled
+        error is converted into an "errored" AgentResponse so the supervisor
+        loop can log it and keep prompting until the flags are found.
+        """
+        start_time = time.time()
+        try:
+            return self.agent.run_iteration(
+                prompt=prompt,
+                session_id=self.state.session_id,
+                workspace_dir=workspace_dir,
+                stream_callback=self._handle_stream,
+            )
+        except Exception as exc:
+            duration = time.time() - start_time
+            self._notify_status(
+                f"ERROR: Agent '{self.agent.name}' raised an unhandled exception: {exc}. "
+                "Treating this iteration as failed and continuing the loop."
+            )
+            return AgentResponse(
+                output="",
+                raw_output="",
+                exit_code=1,
+                duration_seconds=duration,
+                status="errored",
+                error_message=str(exc),
+            )
+
     def run(self) -> EngineState:
         """
         Execute the autonomous loop until all success conditions are met.
@@ -156,16 +186,25 @@ class ClawperEngine:
                     last_output=last_output,
                     state=self.state.to_dict(),
                     consecutive_stalls=consecutive_stalls,
+                    agent_status=self.state.history[-1]["status"] if self.state.history else "completed",
+                    agent_error=self.state.last_error,
                 )
 
-            # Prompt agent
+            # Prompt agent (any exception raised by the agent is caught and treated as a failed iteration)
             self._notify_status(f"Dispatching prompt to agent ({self.agent.name})...")
-            agent_response = self.agent.run_iteration(
-                prompt=current_prompt,
-                session_id=self.state.session_id,
-                workspace_dir=self.workspace.root_dir,
-                stream_callback=self._handle_stream,
-            )
+            agent_response = self._run_agent_safely(current_prompt, self.workspace.root_dir)
+
+            # An agent that stops processing without serving all flags (errored, timed out,
+            # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
+            if agent_response.status != "completed":
+                self.state.record_agent_error(agent_response.error_message or f"Agent ended with status '{agent_response.status}'")
+                self._notify_status(
+                    f"AGENT ERROR (iteration {iteration}, status={agent_response.status}): "
+                    f"{agent_response.error_message or 'no additional details'}. "
+                    f"Consecutive errors: {self.state.consecutive_errors}. Retrying with a fresh prompt."
+                )
+            else:
+                self.state.record_agent_success()
 
             # Record raw output and logs
             last_output = agent_response.output
@@ -180,6 +219,7 @@ class ClawperEngine:
                 status=agent_response.status,
                 duration=agent_response.duration_seconds,
                 commands_run=agent_response.commands_run,
+                error_message=agent_response.error_message,
             )
 
             # Evaluate success conditions
@@ -227,7 +267,11 @@ class ClawperEngine:
 
     def _finalize(self) -> None:
         """Clean up agent, save state, and generate reports."""
-        self.agent.cleanup()
+        try:
+            self.agent.cleanup()
+        except Exception as exc:
+            self._notify_status(f"WARNING: Agent cleanup raised an exception (ignored): {exc}")
+
         if not self.state.completed_at:
             self.state.completed_at = time.time()
 
