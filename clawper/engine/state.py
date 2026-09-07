@@ -39,6 +39,7 @@ class EngineState:
     consecutive_errors: int = 0
     total_errors: int = 0
     last_error: Optional[str] = None
+    last_agent_status: str = "completed"
 
     def add_flag(self, flag: str, source: str = "output", iteration: int = 0, flag_type: str = "generic") -> bool:
         """Add flag if not already present. Returns True if flag is new."""

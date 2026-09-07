@@ -193,13 +193,14 @@ class ClawperEngine:
                     last_output=last_output,
                     state=self.state.to_dict(),
                     consecutive_stalls=consecutive_stalls,
-                    agent_status=self.state.history[-1]["status"] if self.state.history else STATUS_COMPLETED,
+                    agent_status=self.state.last_agent_status,
                     agent_error=self.state.last_error,
                 )
 
             # Prompt agent (any exception raised by the agent is caught and treated as a failed iteration)
             self._notify_status(f"Dispatching prompt to agent ({self.agent.name})...")
             agent_response = self._run_agent_safely(current_prompt, self.workspace.root_dir)
+            self.state.last_agent_status = agent_response.status
 
             # An agent that stops processing without serving all flags (errored, timed out,
             # or interrupted) is treated as an error: log it, but NEVER stop the loop for it.
@@ -274,6 +275,9 @@ class ClawperEngine:
             # Linear (rather than exponential) backoff is used intentionally: it grows
             # predictably with the error streak while the MAX_ERROR_BACKOFF_SECONDS cap
             # keeps retries frequent enough that the agent isn't left idle for too long.
+            # `consecutive_errors` (not a decaying/windowed value) is reset to 0 by
+            # `record_agent_success` as soon as one iteration completes cleanly, so the
+            # backoff only stays at its max for sustained failure streaks, not sporadic ones.
             base_delay = self.config.execution.loop_delay
             if self.state.consecutive_errors > 0:
                 delay = min(MIN_ERROR_BACKOFF_SECONDS * self.state.consecutive_errors, MAX_ERROR_BACKOFF_SECONDS)
