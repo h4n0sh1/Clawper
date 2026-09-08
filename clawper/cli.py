@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
 
 from clawper import __version__
 from clawper.config import (
@@ -150,14 +151,15 @@ def run(
 
     # Callbacks for rich output
     def on_status(msg: str, state) -> None:
+        safe = escape(msg)
         if "VICTORY" in msg:
-            console.print(Panel(msg, style="bold green"))
+            console.print(Panel(safe, style="bold green"))
         elif "NEW FLAG" in msg:
-            console.print(f"[bold green]🚩 {msg}[/bold green]")
+            console.print(f"[bold green]🚩 {safe}[/bold green]")
         elif msg.startswith(">>>"):
-            console.print(f"[bold cyan]{msg}[/bold cyan]")
+            console.print(f"[bold cyan]{safe}[/bold cyan]")
         else:
-            console.print(f"[blue][*][/blue] {msg}")
+            console.print(f"[blue][*][/blue] {safe}")
 
     def on_stream(chunk: str) -> None:
         # Driver emits concise, prefixed lines (⚙ tool, 💬 text, ↳ result).
@@ -165,21 +167,22 @@ def run(
         for line in chunk.splitlines():
             if not line:
                 continue
+            safe = escape(line)
             if line.startswith("💬"):
-                console.print(f"[white]{line}[/white]")
+                console.print(f"[white]{safe}[/white]")
             elif line.startswith("⚙"):
-                console.print(f"[cyan]{line}[/cyan]")
+                console.print(f"[cyan]{safe}[/cyan]")
             elif line.lstrip().startswith("↳"):
-                console.print(f"[dim]{line}[/dim]")
+                console.print(f"[dim]{safe}[/dim]")
             elif line.startswith("✗") or "API Error" in line:
-                console.print(f"[red]{line}[/red]")
+                console.print(f"[red]{safe}[/red]")
             elif line.startswith("[clawper]"):
-                console.print(f"[yellow]{line}[/yellow]")
+                console.print(f"[yellow]{safe}[/yellow]")
             else:
-                console.print(line, highlight=False)
+                console.print(safe, highlight=False)
 
     def on_flag(flag: str, src: str) -> None:
-        console.print(Panel(f"🚩 FLAG CAPTURED: [bold yellow]{flag}[/bold yellow]\nSource: {src}", border_style="green"))
+        console.print(Panel(f"🚩 FLAG CAPTURED: [bold yellow]{escape(flag)}[/bold yellow]\nSource: {escape(src)}", border_style="green"))
 
     engine = ClawperEngine(
         config=config,

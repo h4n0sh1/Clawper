@@ -69,6 +69,12 @@ class AgentDriver(ABC):
         """Check if the agent binary / environment is installed and usable."""
         pass
 
+    def reset_session(self) -> None:
+        """Drop any in-process conversation continuity so the next iteration
+        starts a fresh agent session. Default no-op; drivers that keep
+        cross-iteration session state should override this."""
+        return None
+
     def cleanup(self) -> None:
         """Clean up any active processes or resources."""
         pass

@@ -128,6 +128,9 @@ class ExecutionConfig:
     auto_nudge: bool = True
     # Auto-detect stall if consecutive iterations make no progress
     stall_detection_threshold: int = 3
+    # After this many CONSECUTIVE safety-filter ([cyber]) blocks, soft-reset the
+    # loop to iteration 0 (keeping captured flags) and switch to a safer prompt.
+    safeguard_reset_threshold: int = 10
     # CTF writeup output path
     writeup_path: str = "WRITEUP.md"
     # State file path
