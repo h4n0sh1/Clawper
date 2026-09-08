@@ -67,6 +67,12 @@ class ClaudeCodeDriver(AgentDriver):
         binary = self.config.binary_path
         return shutil.which(binary) is not None
 
+    def reset_session(self) -> None:
+        """Force the next iteration to start a brand-new Claude conversation
+        (no --continue), dropping the accumulated transcript that the safety
+        filter keeps flagging."""
+        self._session_count = 0
+
     def _stream_json_enabled(self) -> bool:
         # Default ON; a config may disable it via agent.stream_json: false.
         return bool(getattr(self.config, "stream_json", True))

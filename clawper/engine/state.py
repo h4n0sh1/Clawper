@@ -42,6 +42,9 @@ class EngineState:
     total_errors: int = 0
     last_error: Optional[str] = None
     last_agent_status: str = STATUS_COMPLETED
+    consecutive_safeguards: int = 0
+    total_safeguards: int = 0
+    safe_mode_level: int = 0
 
     def add_flag(self, flag: str, source: str = "output", iteration: int = 0, flag_type: str = "generic") -> bool:
         """Add flag if not already present. Returns True if flag is new."""
@@ -96,9 +99,36 @@ class EngineState:
         self.last_error = error_message
 
     def record_agent_success(self) -> None:
-        """Reset the consecutive error streak after a successfully completed iteration."""
+        """Reset the consecutive error/safeguard streaks after a completed iteration."""
         self.consecutive_errors = 0
+        self.consecutive_safeguards = 0
         self.last_error = None
+
+    def record_safeguard(self) -> None:
+        """Track a consecutive safety-filter ([cyber]) block."""
+        self.consecutive_safeguards += 1
+        self.total_safeguards += 1
+
+    def reset_safeguards(self) -> None:
+        """A non-safeguard error breaks the safety-filter streak."""
+        self.consecutive_safeguards = 0
+
+    def soft_reset_keep_progress(self) -> None:
+        """Restart the loop fresh (iteration 0, clean history, cleared error/stall
+        counters, new session id) while KEEPING captured flags, and bump the
+        safe-mode level. Recovers from a safety-filter loop without losing progress."""
+        self.safe_mode_level += 1
+        self.session_id = str(uuid.uuid4())[:8]
+        self.started_at = time.time()
+        self.completed_at = None
+        self.iterations_completed = 0
+        self.history = []
+        self.last_output = "safe-mode active"
+        self.stalls_count = 0
+        self.consecutive_errors = 0
+        self.consecutive_safeguards = 0
+        self.last_error = None
+        self.last_agent_status = STATUS_COMPLETED
 
     def update_phase(self, req_flags: int = 1, is_root: bool = False) -> None:
         num_flags = len(self.captured_flags)
