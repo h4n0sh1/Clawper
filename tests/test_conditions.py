@@ -24,13 +24,15 @@ def test_flag_condition_regex_detection():
     config = FlagConditionConfig(required_count=2)
     condition = FlagCondition(config)
 
-    # Output with HTB md5 format and standard CTF{} format
-    output = """
-    Found user flag: 9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
-    Also found root flag: flag{super_secret_root_flag_12345}
-    """
-    ctx = EvaluationContext(agent_output=output)
-    res = condition.evaluate(ctx)
+    # A wrapped flag (flag{...}) proves itself wherever it appears, so it is
+    # credited straight from output. A bare 32-hex is only a flag when it is read
+    # out of an actual flag file -- a "Found user flag: <hex>" label in prose is
+    # not enough (it is usually a hash), so that hex is supplied via root.txt.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        w_dir = Path(tmpdir)
+        (w_dir / "root.txt").write_text("9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d\n")
+        output = "Also found root flag: flag{super_secret_root_flag_12345}"
+        res = condition.evaluate(EvaluationContext(agent_output=output, workspace_dir=w_dir))
 
     assert res.met is True
     assert len(res.data["captured_flags"]) == 2
@@ -58,9 +60,13 @@ def test_flag_condition_insufficient_flags():
     config = FlagConditionConfig(required_count=2)
     condition = FlagCondition(config)
 
-    output = "Found user flag: 9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d"
-    ctx = EvaluationContext(agent_output=output)
-    res = condition.evaluate(ctx)
+    # One genuine flag (read from user.txt) is below the required count of 2.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        w_dir = Path(tmpdir)
+        (w_dir / "user.txt").write_text("9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d\n")
+        res = condition.evaluate(
+            EvaluationContext(agent_output="No flag here", workspace_dir=w_dir)
+        )
 
     assert res.met is False
     assert res.data["count"] == 1
@@ -152,9 +158,85 @@ def test_composite_condition():
     res1 = composite.evaluate(ctx1)
     assert res1.met is False
 
-    # 2. Output has 2 flags and root -> Passes
-    ctx2 = EvaluationContext(
-        agent_output="User: 9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d\nRoot: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d\nuid=0(root)"
-    )
-    res2 = composite.evaluate(ctx2)
+    # 2. Two flags (read from user.txt/root.txt) and root proof -> Passes
+    with tempfile.TemporaryDirectory() as tmpdir:
+        w_dir = Path(tmpdir)
+        (w_dir / "user.txt").write_text("9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d\n")
+        (w_dir / "root.txt").write_text("1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d\n")
+        ctx2 = EvaluationContext(agent_output="uid=0(root)", workspace_dir=w_dir)
+        res2 = composite.evaluate(ctx2)
     assert res2.met is True
+
+
+def test_flag_condition_ignores_unlabelled_hashes():
+    """Bare 32-hex strings in console output are not flags.
+
+    secretsdump / hashcat / md5sum output is full of them; treating them as
+    captures used to satisfy required_count and, worse, mark the user and root
+    flags as found.
+    """
+    config = FlagConditionConfig(
+        required_count=2, require_user_flag=True, require_root_flag=True
+    )
+    condition = FlagCondition(config)
+
+    output = """
+    Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+    svc_deploy:1104:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+    md5sum payload.exe -> 5d41402abc4b2a76b9719d911017c592
+    """
+    res = condition.evaluate(EvaluationContext(agent_output=output))
+
+    assert res.met is False
+    assert res.data["captured_flags"] == []
+    assert res.data["count"] == 0
+    assert len(res.data["candidate_flags"]) >= 3
+    assert res.data["user_flag_found"] is False
+    assert res.data["root_flag_found"] is False
+
+
+def test_flag_condition_types_flags_by_provenance():
+    """user.txt / root.txt decide the type -- never the flag value itself."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        w_dir = Path(tmpdir)
+        flags_dir = w_dir / "flags"
+        flags_dir.mkdir()
+        (flags_dir / "user.txt").write_text("11111111222222223333333344444444\n")
+        (flags_dir / "root.txt").write_text("aaaaaaaabbbbbbbbccccccccdddddddd\n")
+
+        config = FlagConditionConfig(
+            required_count=2, require_user_flag=True, require_root_flag=True
+        )
+        res = FlagCondition(config).evaluate(
+            EvaluationContext(agent_output="", workspace_dir=w_dir)
+        )
+
+        assert res.met is True
+        types = {r["flag"]: r["flag_type"] for r in res.data["flag_records"]}
+        assert types["11111111222222223333333344444444"] == "user"
+        assert types["aaaaaaaabbbbbbbbccccccccdddddddd"] == "root"
+
+
+def test_flag_condition_requires_root_flag_not_just_count():
+    """Two user-side flags must not satisfy a required root flag."""
+    config = FlagConditionConfig(
+        required_count=2, require_user_flag=True, require_root_flag=True
+    )
+    condition = FlagCondition(config)
+
+    # Both flags are read from user.txt -> both typed "user"; no root flag file
+    # exists, so the required root flag is unmet even though the count is 2.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        w_dir = Path(tmpdir)
+        (w_dir / "user.txt").write_text(
+            "11111111222222223333333344444444\n"
+            "55555555666666667777777788888888\n"
+        )
+        res = condition.evaluate(
+            EvaluationContext(agent_output="", workspace_dir=w_dir)
+        )
+
+    assert res.data["count"] == 2
+    assert res.data["user_flag_found"] is True
+    assert res.data["root_flag_found"] is False
+    assert res.met is False

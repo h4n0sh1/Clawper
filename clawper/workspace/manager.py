@@ -82,10 +82,12 @@ class WorkspaceManager:
             records.append(asdict(record))
             flags_json.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
-        # If user.txt or root.txt specifically
-        if flag_type == "user" or "user" in source.lower():
+        # Mirror to flags/user.txt or flags/root.txt only on an explicit type.
+        # Sniffing the source string for "user"/"root" mislabels anything found
+        # in a path that happens to contain those words.
+        if flag_type == "user":
             (self.flags_dir / "user.txt").write_text(f"{flag}\n", encoding="utf-8")
-        elif flag_type == "root" or "root" in source.lower():
+        elif flag_type == "root":
             (self.flags_dir / "root.txt").write_text(f"{flag}\n", encoding="utf-8")
 
     def get_captured_flags(self) -> List[Dict[str, Any]]:

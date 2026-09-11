@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -194,41 +196,75 @@ class ClaudeCodeDriver(AgentDriver):
                 universal_newlines=True,
             )
 
+            def handle_line(line: str) -> None:
+                raw_chunks.append(line)
+                parsed = None
+                if stream_json:
+                    s = line.strip()
+                    if s.startswith("{"):
+                        try:
+                            parsed = json.loads(s)
+                        except Exception:
+                            parsed = None
+
+                if parsed is not None:
+                    for disp in self._render_event(parsed):
+                        emit(disp)
+                        if disp.startswith("⚙  bash"):
+                            commands_run.append(disp)
+                        elif disp.startswith("⚙"):
+                            tools_used.append(disp)
+                else:
+                    # Non-JSON (plain text mode, or an API/CLI error line) — show it.
+                    emit(line.rstrip("\n"))
+                    stripped = line.strip()
+                    if stripped.startswith("$ ") or stripped.startswith("Running: "):
+                        commands_run.append(stripped)
+
+            # stdout is drained on a background thread so timeout_per_run is a
+            # real wall-clock deadline. Reading inline blocked in readline()
+            # until the child closed its pipe, which meant the timeout could
+            # only ever be checked after the run had already finished.
+            timeout = self.config.timeout_per_run or 0
+            deadline = (time.time() + timeout) if timeout > 0 else None
+            lines: "queue.Queue[Optional[str]]" = queue.Queue()
+
+            def pump(stream) -> None:
+                try:
+                    for line in iter(stream.readline, ""):
+                        lines.put(line)
+                except Exception:
+                    pass
+                finally:
+                    lines.put(None)
+
             if self._current_process.stdout:
-                for line in iter(self._current_process.stdout.readline, ""):
-                    raw_chunks.append(line)
-                    parsed = None
-                    if stream_json:
-                        s = line.strip()
-                        if s.startswith("{"):
-                            try:
-                                parsed = json.loads(s)
-                            except Exception:
-                                parsed = None
+                reader = threading.Thread(
+                    target=pump, args=(self._current_process.stdout,), daemon=True
+                )
+                reader.start()
 
-                    if parsed is not None:
-                        for disp in self._render_event(parsed):
-                            emit(disp)
-                            if disp.startswith("⚙  bash"):
-                                commands_run.append(disp)
-                            elif disp.startswith("⚙"):
-                                tools_used.append(disp)
-                    else:
-                        # Non-JSON (plain text mode, or an API/CLI error line) — show it.
-                        emit(line.rstrip("\n"))
-                        stripped = line.strip()
-                        if stripped.startswith("$ ") or stripped.startswith("Running: "):
-                            commands_run.append(stripped)
+                while True:
+                    if deadline is not None and time.time() >= deadline:
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+                    try:
+                        line = lines.get(timeout=1.0)
+                    except queue.Empty:
+                        continue
+                    if line is None:
+                        break
+                    handle_line(line)
 
-            self._current_process.wait(timeout=self.config.timeout_per_run)
+            remaining = None
+            if deadline is not None:
+                remaining = max(1.0, deadline - time.time())
+            self._current_process.wait(timeout=remaining)
             exit_code = self._current_process.returncode
 
         except subprocess.TimeoutExpired:
             status = "timeout"
             error_msg = f"Claude Code process timed out after {self.config.timeout_per_run} seconds."
-            if self._current_process:
-                self._current_process.kill()
-                self._current_process.wait()
+            self._terminate_current()
             exit_code = -1
         except FileNotFoundError:
             status = "errored"
@@ -303,14 +339,27 @@ class ClaudeCodeDriver(AgentDriver):
             },
         )
 
+    def _terminate_current(self) -> None:
+        """Stop the running CLI child: SIGTERM first, SIGKILL if it lingers.
+
+        Only the direct child is signalled. Work the agent deliberately
+        detached (nohup listeners, long scans) lives in the background by
+        design and is left running.
+        """
+        proc = self._current_process
+        if not proc or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+
     def cleanup(self) -> None:
         if self._current_process and self._current_process.poll() is None:
-            try:
-                self._current_process.terminate()
-                self._current_process.wait(timeout=2)
-            except Exception:
-                try:
-                    self._current_process.kill()
-                except Exception:
-                    pass
+            self._terminate_current()
             self._current_process = None
