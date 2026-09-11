@@ -123,20 +123,34 @@ class ClawperEngine:
     def _sync_flags(self, condition_result: ConditionResult, iteration: int) -> None:
         """Extract flags from condition result and sync with state & workspace."""
         flags_data = condition_result.data.get("sub_results", {}).get("Flags", {}).get("data", {})
-        captured = flags_data.get("captured_flags", [])
+        # Typed records carry the provenance the condition established (which
+        # file or label the flag came from). Older payloads only had values.
+        records = flags_data.get("flag_records")
+        if not records:
+            records = [{"flag": f} for f in flags_data.get("captured_flags", [])]
 
-        for flag in captured:
+        for record in records:
+            flag = record.get("flag")
+            if not flag:
+                continue
+            # The type comes from where the flag was found, never from the flag
+            # value itself: a 32-hex string never contains "user" or "root".
+            flag_type = record.get("flag_type") or "generic"
+            source = record.get("origin") or f"iteration_{iteration}"
             is_new = self.state.add_flag(
                 flag=flag,
-                source=f"iteration_{iteration}",
+                source=source,
                 iteration=iteration,
-                flag_type="user" if "user" in flag.lower() else ("root" if "root" in flag.lower() else "generic"),
+                flag_type=flag_type,
             )
             if is_new:
-                self.workspace.save_flag(flag, source=f"iteration_{iteration}", iteration=iteration)
-                self._notify_status(f"NEW FLAG DISCOVERED: {flag}")
+                self.workspace.save_flag(
+                    flag, source=source, iteration=iteration, flag_type=flag_type
+                )
+                label = f" [{flag_type}]" if flag_type != "generic" else ""
+                self._notify_status(f"NEW FLAG DISCOVERED{label}: {flag}")
                 if self.on_flag_found:
-                    self.on_flag_found(flag, f"iteration_{iteration}")
+                    self.on_flag_found(flag, source)
 
     def _run_agent_safely(self, prompt: str, workspace_dir: Path) -> AgentResponse:
         """

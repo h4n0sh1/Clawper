@@ -35,11 +35,11 @@ def test_clawper_engine_never_stops_until_success():
             # Iteration 1: Recon only
             "Running nmap scan on 10.10.11.100. Open ports: 80, 22. Found web application.",
             # Iteration 2: User exploit & user flag
-            "Exploited SQLi in web application. Gained low-privilege shell. user flag: 11111111222222223333333344444444",
+            "Exploited SQLi in web application. Gained low-privilege shell. user flag{11111111222222223333333344444444}",
             # Iteration 3: Agent prematurely claims it is done or gives up
             "I have finished investigating the machine. I cannot find any further vulnerabilities.",
             # Iteration 4: Agent continues, exploits SUID and grabs root flag + root proof
-            "Found SUID binary /usr/bin/find. Executed root privesc. uid=0(root). root flag: aaaaaaaabbbbbbbbccccccccdddddddd",
+            "Found SUID binary /usr/bin/find. Executed root privesc. uid=0(root). root flag{aaaaaaaabbbbbbbbccccccccdddddddd}",
         ]
 
         agent = MockAgentDriver(responses=mock_responses)
@@ -60,8 +60,8 @@ def test_clawper_engine_never_stops_until_success():
         assert final_state.iterations_completed == 4
         assert len(final_state.captured_flags) == 2
         assert len(flags_found) == 2
-        assert "11111111222222223333333344444444" in [f["flag"] for f in final_state.captured_flags]
-        assert "aaaaaaaabbbbbbbbccccccccdddddddd" in [f["flag"] for f in final_state.captured_flags]
+        assert "flag{11111111222222223333333344444444}" in [f["flag"] for f in final_state.captured_flags]
+        assert "flag{aaaaaaaabbbbbbbbccccccccdddddddd}" in [f["flag"] for f in final_state.captured_flags]
 
         # Verify writeup was generated
         writeup_file = Path(tmpdir) / "WRITEUP.md"
@@ -93,7 +93,7 @@ def test_clawper_engine_recovers_from_agent_exception():
             # Iteration 3: agent times out / errors via a status response.
             AgentResponse(output="", status="timeout", error_message="process timed out", exit_code=-1),
             # Iteration 4: agent recovers and finds the flag.
-            "Exploited the service. flag: 11111111222222223333333344444444",
+            "Exploited the service. flag{11111111222222223333333344444444}",
         ]
 
         agent = MockAgentDriver(responses=mock_responses)
@@ -126,7 +126,7 @@ def test_clawper_engine_max_iterations_safeguard():
 
         mock_responses = [
             "Recon on port 80.",
-            "Found user flag: 11111111222222223333333344444444",
+            "Found user flag{11111111222222223333333344444444}",
             "Should not be reached because max_iterations=2",
         ]
 

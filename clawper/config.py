@@ -63,6 +63,17 @@ class FlagConditionConfig:
     require_user_flag: bool = False
     user_flag_pattern: Optional[str] = None
     root_flag_pattern: Optional[str] = None
+    # Optional external flag verifier. When set, a flag is only *credited* if this
+    # shell command confirms it. The candidate flag is passed as the env var
+    # CLAWPER_FLAG (run with shell=True). Exit-code contract:
+    #   0            -> VALID   (accepted / already owned) -> credited + cached
+    #   3            -> INVALID (definitively wrong)        -> dropped + cached
+    #   anything else-> UNKNOWN (token/network error)       -> not credited, retried
+    # Results are cached in verify_cache_file (relative to the workspace) so a
+    # flag is never submitted twice.
+    verify_command: Optional[str] = None
+    verify_cache_file: str = "loot/flag_verification.json"
+    verify_timeout: int = 25
 
 
 @dataclass
